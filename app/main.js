@@ -45,6 +45,11 @@ switch (command) {
     process.stdout.write(hash + '\n'); // Ensure it only outputs the hash with a newline
     break;
   }
+  case "commit-tree":
+    process.stdout.write(
+      commitTree(process.argv[3], process.argv[5], process.argv[7])
+    );
+    break;
   
   default:
     throw new Error(`Unknown command ${command}`);
@@ -184,3 +189,32 @@ function writeTreeObject(dirPath) {
   return treeHash;
 }
 
+function commitTree(treeSHA, parentCommitSHA, message) {
+  const authorDate = Math.floor(Date.now() / 1000); // Unix timestamp
+  const committerDate = authorDate;
+
+  const commitContentBuffer = Buffer.concat([
+    Buffer.from(`tree ${treeSHA}\n`),
+    parentCommitSHA ? Buffer.from(`parent ${parentCommitSHA}\n`) : Buffer.alloc(0),
+    Buffer.from(`author The Commiter <arghyapatra340@gmail.com> ${authorDate} +0000\n`),
+    Buffer.from(`committer The Commiter <arghyapatra340@gmail.com> ${committerDate} +0000\n\n`),
+    Buffer.from(`${message}\n`)
+  ]);
+
+  const commitBuffer = Buffer.concat([
+    Buffer.from(`commit ${commitContentBuffer.length}\x00`),
+    commitContentBuffer
+  ]);
+
+  const commitHash = createHash(commitBuffer);
+  const compressedCommit = zlib.deflateSync(commitBuffer);
+  
+  const dir = commitHash.slice(0, 2);
+  const fileName = commitHash.slice(2);
+  const commitDir = path.resolve(process.cwd(), '.git', 'objects', dir);
+  
+  fs.mkdirSync(commitDir, { recursive: true });
+  fs.writeFileSync(path.resolve(commitDir, fileName), compressedCommit);
+  
+  return commitHash;
+}
