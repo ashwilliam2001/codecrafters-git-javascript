@@ -47,12 +47,16 @@ switch (command) {
       }
       break;
     }
-  
-      
-
+    case "write-tree": {
+      const hash = writeTreeObject('./');
+      process.stdout.write(hash)
+      break;
+    }
   default:
     throw new Error(`Unknown command ${command}`);
 }
+
+
 
 function createGitDirectory() {
   fs.mkdirSync(path.join(process.cwd(), ".git"), { recursive: true });
@@ -62,6 +66,7 @@ function createGitDirectory() {
   fs.writeFileSync(path.join(process.cwd(), ".git", "HEAD"), "ref: refs/heads/main\n");
   console.log("Initialized git directory");
 }
+
 
 
 function prettyPrintObject(objectSHA) {
@@ -107,6 +112,8 @@ function prettyPrintBlob(uncompressedData) {
   
   // Ensure content is a string before writing to stdout
   process.stdout.write(content);
+  createObject(filePath,uncompressedData);
+  return blobHash;
 }
 
 function prettyPrintTree(uncompressedData) {
@@ -169,9 +176,10 @@ function createHash(input) {
   hash.update(input);
   //generate the hash value as a hexadecimal string
   const hashHex = hash.digest('hex');
-
   return hashHex;
 }
+
+
 
 function writeObject(filePath) {
   //const fileData = fs.readFileSync(filePath, "utf-8");
@@ -204,7 +212,47 @@ function writeObject(filePath) {
       });
     }
   });
+  function createObject(objectSubPath,compressedData){
+    fs.mkdirSync(`.git/objects/${objectSubPath.split('/')[0]}`, { recursive : true})
+    fs.writeFileSync(`.git/objects/${objectSubPath}`,compressedData);
+ }
 
 }
 
-
+function writeTreeObject(dirPath){
+  const filesAndDir = fs.readdirSync(dirPath).filter((file) => file !== ".git" && file !== "main.js");
+  const entries = [];
+  for(const file of filesAndDir){
+     const fullPath = path.join(dirPath,file);
+     if(fs.lstatSync(fullPath).isDirectory()){
+        entries.push({
+           mode: 40000,
+           name: file,
+           hash: writeTreeObject(fullPath),
+        })
+     }
+     else{
+        entries.push({
+           mode:100644,
+           name: file,
+           hash: writeBlobObject(path.join(dirPath,file)),
+        })
+     }
+  }
+  const treeData = entries.reduce((acc,{mode,name,hash}) => {
+     return Buffer.concat([
+        acc,
+        Buffer.from(`${mode} ${name}\0`),
+        Buffer.from(hash,'hex'),
+     ])
+  },Buffer.alloc(0));
+  const tree = Buffer.concat([
+     Buffer.from(`tree ${treeData.length}\x00`),
+     treeData,
+  ])
+  const compressedData = zlib.deflateSync(tree);
+  const treeHash = createShaHash(tree); 
+  fs.mkdirSync(path.resolve(dirPath,".git","objects",sliceHash(treeHash).split('/')[0]),{ recursive: true});
+  fs.writeFileSync(path.resolve(dirPath,".git","objects",sliceHash(treeHash)),compressedData);
+  return treeHash;
+ }
