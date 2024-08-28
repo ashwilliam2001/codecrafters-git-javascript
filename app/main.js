@@ -1,220 +1,75 @@
-const fs = require("fs");
 const path = require("path");
-const zlib = require('zlib');
-const crypto = require('crypto');
+const init = require("./modules/init");
+const clone = require("./modules/clone");
+const createCommit = require("./modules/createCommit");
+const catFile = require("./modules/catFile");
+const catTree = require("./modules/catTree");
+const writeBlob = require("./modules/writeBlob");
+const writeTree = require("./modules/writeFolderAsTree");
 
+// You can use print statements as follows for debugging, they'll be visible when running tests.
+// Uncomment this block to pass the first stage
 const command = process.argv[2];
+const argvs = process.argv.slice(3);
+const base_path = process.cwd();
 
 switch (command) {
   case "init":
-    createGitDirectory();
+    init("./");
     break;
-  case "cat-file": {
-    const flag = process.argv[3];
-    const blobSHA = process.argv[4];
-    if (flag === "-p") {
-      prettyPrintObject(blobSHA);
-    } else {
-      throw new Error(`Unknown flag ${flag}`);
+
+  case "cat-file":
+    switch (argvs.length) {
+      case 1:
+        catFile(argvs[0]);
+        break;
+      case 2:
+        catFile(argvs[1]);
+        break;
     }
     break;
-  }
-  case "hash-object": {
-    const flag = process.argv[3];
-    const filePath = process.argv[4];
-    if (flag === "-w") {
-      const hash = writeObject(filePath);
-      process.stdout.write(hash + '\n'); // Ensure it outputs the hash with a newline
-    } else {
-      throw new Error(`Unknown flag ${flag}`);
+
+  case "hash-object":
+    let blobHash;
+    switch (argvs.length) {
+      case 1:
+        blobHash = writeBlob(true, argvs[0]);
+        console.log(blobHash);
+        break;
+      case 2:
+        blobHash = writeBlob(true, argvs[1]);
+        console.log(blobHash);
+        break;
     }
     break;
-  }
-  case "ls-tree": {
-    const flag = process.argv[3];
-    const treeSHA = process.argv[4];
-    if (flag === "--name-only") {
-      prettyPrintObject(treeSHA);
-    } else {
-      throw new Error(`Unknown flag ${flag}`);
+
+  case "ls-tree":
+    switch (argvs.length) {
+      case 1:
+        catTree(argvs[0]);
+        break;
+      case 2:
+        catTree(argvs[1]);
+        break;
     }
     break;
-  }
-  case "write-tree": {
-    const hash = writeTreeObject('./');
-    process.stdout.write(hash + '\n'); // Ensure it only outputs the hash with a newline
+
+  case "write-tree":
+    let treeHash = writeTree("./");
+    process.stdout.write(treeHash);
     break;
-  }
+
   case "commit-tree":
-    process.stdout.write(
-      commitTree(process.argv[3], process.argv[5], process.argv[7])
-    );
+    createCommit(argvs[0], argvs[2], argvs[4]);
     break;
-  
+
+  case "clone":
+    clone(argvs[0], argvs[1]);
+    break;
+
   default:
     throw new Error(`Unknown command ${command}`);
 }
 
-function createGitDirectory() {
-  fs.mkdirSync(path.join(process.cwd(), ".git"), { recursive: true });
-  fs.mkdirSync(path.join(process.cwd(), ".git", "objects"), { recursive: true });
-  fs.mkdirSync(path.join(process.cwd(), ".git", "refs"), { recursive: true });
-  fs.writeFileSync(path.join(process.cwd(), ".git", "HEAD"), "ref: refs/heads/main\n");
-  console.log("Initialized git directory");
-}
-
-function prettyPrintObject(objectSHA) {
-  const objectPath = path.join(
-    process.cwd(), 
-    ".git", 
-    "objects", 
-    objectSHA.slice(0, 2), 
-    objectSHA.slice(2)
-  );
-  const objectContent = fs.readFileSync(objectPath);
-  zlib.inflate(objectContent, (err, buffer) => { 
-    if (err) {
-      console.error('Error uncompressing data:', err);
-      return;
-    }
-    const uncompressedData = buffer.toString('utf-8');
-    const objectType = uncompressedData.split(" ")[0];
-    switch (objectType) {
-      case "blob":
-        prettyPrintBlob(uncompressedData);
-        break;
-      case "tree":
-        prettyPrintTree(uncompressedData);
-        break;
-      case "commit":
-        console.log("commit");
-        break;
-      default:
-        console.log("unknown object type", objectType);
-        break;
-    }
-  });
-}
-
-function prettyPrintBlob(uncompressedData) {
-  const content = uncompressedData.split('\x00')[1];
-  process.stdout.write(content);
-}
-
-function prettyPrintTree(uncompressedData) {
-  let remainingData = uncompressedData.slice(uncompressedData.indexOf('\x00') + 1);
-  while (remainingData.length > 0) {
-    const nullIndex = remainingData.indexOf('\x00');
-    const entryHeader = remainingData.slice(0, nullIndex);
-    const [fileMode, fileName] = entryHeader.split(" ");
-    const sha1 = remainingData.slice(nullIndex + 1, nullIndex + 21);
-    const sha1Hex = sha1.toString('hex');
-    console.log(fileName);
-    remainingData = remainingData.slice(nullIndex + 21);
-  }
-}
-
-function createHash(input) {
-  const hash = crypto.createHash('sha1');
-  hash.update(input);
-  return hash.digest('hex');
-}
-
-function writeObject(filePath) {
-  const fileContent = fs.readFileSync(filePath);
-  const objectData = Buffer.concat([
-    Buffer.from(`blob ${fileContent.length}\x00`),
-    fileContent,
-  ]);
-
-  const compressedData = zlib.deflateSync(objectData);
-  const objectHash = createHash(objectData);
-
-  // Ensure the directory exists
-  const objectDir = path.join(process.cwd(), ".git", "objects", objectHash.slice(0, 2));
-  fs.mkdirSync(objectDir, { recursive: true });
-  
-  // Write compressed data to the file
-  fs.writeFileSync(path.join(objectDir, objectHash.slice(2)), compressedData);
-
-  return objectHash;
-}
-
-
-function writeTreeObject(dirPath) {
-  const filesAndDir = fs.readdirSync(dirPath).filter((file) => file !== ".git" && file !== "main.js");
-  const entries = [];
-  
-  for (const file of filesAndDir) {
-    const fullPath = path.join(dirPath, file);
-    
-    if (fs.lstatSync(fullPath).isDirectory()) {
-      entries.push({
-        mode: 40000,
-        name: file,
-        hash: writeTreeObject(fullPath),
-      });
-    } else {
-      entries.push({
-        mode: 100644,
-        name: file,
-        hash: writeObject(fullPath),
-      });
-    }
-  }
-  
-  const treeData = entries.reduce((acc, { mode, name, hash }) => {
-    return Buffer.concat([
-      acc,
-      Buffer.from(`${mode} ${name}\0`),
-      Buffer.from(hash, 'hex'),
-    ]);
-  }, Buffer.alloc(0));
-  
-  const tree = Buffer.concat([
-    Buffer.from(`tree ${treeData.length}\x00`),
-    treeData,
-  ]);
-  
-  const compressedData = zlib.deflateSync(tree);
-  const treeHash = createHash(tree);
-  
-  // Ensure directory exists
-  const treeDir = path.join(process.cwd(), ".git", "objects", treeHash.slice(0, 2));
-  fs.mkdirSync(treeDir, { recursive: true });
-  
-  // Write compressed data to the file
-  fs.writeFileSync(path.join(treeDir, treeHash.slice(2)), compressedData);
-  
-  return treeHash;
-}
-
-function commitTree(treeSHA, parentCommitSHA, message) {
-  const authorDate = Math.floor(Date.now() / 1000); // Unix timestamp
-  const committerDate = authorDate;
-
-  const commitContentBuffer = Buffer.concat([
-    Buffer.from(`tree ${treeSHA}\n`),
-    parentCommitSHA ? Buffer.from(`parent ${parentCommitSHA}\n`) : Buffer.alloc(0),
-    Buffer.from(`author The Commiter <arghyapatra340@gmail.com> ${authorDate} +0000\n`),
-    Buffer.from(`committer The Commiter <arghyapatra340@gmail.com> ${committerDate} +0000\n\n`),
-    Buffer.from(`${message}\n`)
-  ]);
-
-  const commitBuffer = Buffer.concat([
-    Buffer.from(`commit ${commitContentBuffer.length}\x00`),
-    commitContentBuffer
-  ]);
-
-  const commitHash = createHash(commitBuffer);
-  const compressedCommit = zlib.deflateSync(commitBuffer);
-  
-  const dir = commitHash.slice(0, 2);
-  const fileName = commitHash.slice(2);
-  const commitDir = path.resolve(process.cwd(), '.git', 'objects', dir);
-  
-  fs.mkdirSync(commitDir, { recursive: true });
-  fs.writeFileSync(path.resolve(commitDir, fileName), compressedCommit);
-  
-  return commitHash;
-}
+// git commitTree <treSHA> -p <commitSHA> -m <message>
+// objects are always better than strings in processing variables
