@@ -25,8 +25,6 @@ switch (command) {
     }
     break;
   }
-  
-
     case "hash-object": {
       const flag = process.argv[3];
       const filePath = process.argv[4];
@@ -37,6 +35,19 @@ switch (command) {
       } 
       break;
     }
+
+    case "ls-tree": {
+      const flag = process.argv[3];
+      const treeSHA = process.argv[4];
+
+      if (flag === "--name-only") {
+        prettyPrintObject(treeSHA);
+      } else {
+        throw new Error(`Unknown flag ${flag}`);
+      }
+      break;
+    }
+  
       
 
   default:
@@ -53,22 +64,101 @@ function createGitDirectory() {
 }
 
 
-function prettyPrintObject(blobSHA) {
-  const blobPath = path.join(process.cwd(), ".git", "objects", blobSHA.slice(0, 2), blobSHA.slice(2));
+function prettyPrintObject(objectSHA) {
+  const objectPath = path.join(
+    process.cwd(), 
+    ".git", 
+    "objects", 
+    objectSHA.slice(0, 2), 
+    objectSHA.slice(2)
+  )
 
-  const blobContent = fs.readFileSync(blobPath);
+  const objectContent = fs.readFileSync(objectPath); // Read as binary buffer
+  //const compressedData = Buffer.from('objectContent', 'base64');
 
-  //const compressedData = Buffer.from('blobContent', 'base64');
-
-  zlib.unzip(blobContent, (err, buffer) => {
+  zlib.inflate(objectContent, (err, buffer) => { 
     if (err) {
       console.error('Error uncompressing data:', err);
-    } else {
-      const uncompressedData = buffer.toString('utf-8');
-      const content = uncompressedData.split('\x00')[1];
-      process.stdout.write(content);
+      return;
     }
+      const uncompressedData = buffer.toString('utf-8');
+      const objectType = uncompressedData.split(" ")[0];
+
+      switch (objectType) {
+        case "blob":
+          prettyPrintBlob(uncompressedData)
+          break;
+        case "tree":
+          prettyPrintTree(uncompressedData)
+          break;
+        case "commit":
+          console.log("commit")
+          break;
+        default:
+          console.log("unknown object type", objectType) 
+          break;
+      }
 }); 
+}
+
+function prettyPrintBlob(uncompressedData) {
+  // Split on the first null byte to separate the header from the content
+  const content = uncompressedData.split('\x00')[1];
+  
+  // Ensure content is a string before writing to stdout
+  process.stdout.write(content);
+}
+
+function prettyPrintTree(uncompressedData) {
+  let remainingData = uncompressedData.slice(uncompressedData.indexOf('\x00') + 1);
+
+  while (remainingData.length > 0) {
+    // Extract the file mode (e.g., "100644") and file name until we reach a NULL byte
+    const nullIndex = remainingData.indexOf('\x00');
+    const entryHeader = remainingData.slice(0, nullIndex);
+    const [fileMode, fileName] = entryHeader.split(" ");
+
+    // The next 20 bytes (40 hex characters) are the SHA-1 hash
+    const sha1 = remainingData.slice(nullIndex + 1, nullIndex + 21);
+    const sha1Hex = sha1.toString('hex');
+
+    console.log(fileName);
+
+    // Update remainingData to continue parsing the next entry
+    remainingData = remainingData.slice(nullIndex + 21);
+  }
+}
+
+
+
+
+function lsTree() {
+  const isNameOnly = process.argv[3];
+  let hash = '';
+  if (isNameOnly === '--name-only') {
+    //display the name only
+    hash = process.argv[4];
+  } else {
+    hash = process.argv[3];
+  }
+  const dirName = hash.slice(0, 2);
+  const fileName = hash.slice(2);
+  const objectPath = path.join(__dirname, '.git', 'objects', dirName, fileName);
+  const dataFromFile = fs.readFileSync(objectPath);
+  //decrypt the data from the file
+  const inflated = zlib.inflateSync(dataFromFile);
+  //notice before encrypting the data what we do was we encrypt
+  //blob length/x00 so to get the previous string back what we need to do is split with /xoo
+  const enteries = inflated.toString('utf-8').split('\x00');
+  //enteries will be [blob length/x00, actual_file_content]
+  const dataFromTree = enteries.slice(1);
+  const names = dataFromTree
+    .filter((line) => line.includes(' '))
+    .map((line) => line.split(' ')[1]);
+  const namesString = names.join('\n');
+  const response = namesString.concat('\n');
+  //this is the regex pattern that tells to replace multiple global \n with single \n
+  process.stdout.write(response.replace(/\n\n/g, '\n'));
 }
 
 
